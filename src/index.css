@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+@theme {
+  --color-panel: #16161e;
+  --color-panel-lighter: #1c1c28;
+  --color-panel-border: #2e2e40;
+  --color-surface: #1e1e2c;
+  --color-surface-hover: #262638;
+  --color-accent: #7c6bf5;
+  --color-accent-hover: #9585ff;
+  --color-accent-muted: rgba(124, 107, 245, 0.12);
+  --color-text-primary: #e8e8f0;
+  --color-text-secondary: #9898b0;
+  --color-text-muted: #5e5e78;
+  --color-danger: #f04848;
+  --color-success: #3ac06a;
+  --color-warning: #f0a030;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-panel);
+  color: var(--color-text-primary);
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-panel-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.input-field {
+  width: 100%;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-panel-border);
+  background: var(--color-panel);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.input-field:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(124, 107, 245, 0.15);
+}
+.input-field:hover:not(:focus) {
+  border-color: var(--color-text-muted);
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s ease-in-out infinite;
+}
