@@ -1,5 +1,5 @@
 import { useEffect, useRef, type RefObject, type MutableRefObject } from 'react';
-import { Application, Graphics, Text as PixiText, Container, TextStyle } from 'pixi.js';
+import { Application, Graphics, Text as PixiText, Container, TextStyle, Sprite, Texture, Assets } from 'pixi.js';
 import { useEditorStore } from '@/store/useEditorStore';
 import type { Entity, ComponentData, SpriteData } from '@/types';
 import { hexToNumber } from '@/utils/colors';
@@ -10,16 +10,33 @@ interface EntityGraphic {
   baseChildCount: number;
 }
 
+export interface SceneCanvasApi {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  fitToScreen: () => void;
+  resetZoom: () => void;
+  getZoom: () => number;
+}
+
 export function useSceneCanvas(
   canvasRef: RefObject<HTMLCanvasElement | null>,
   containerRef: RefObject<HTMLDivElement | null>,
-  pixiHandledRef: MutableRefObject<boolean>
+  pixiHandledRef: MutableRefObject<boolean>,
+  apiRef: MutableRefObject<SceneCanvasApi | null>
 ) {
   const appRef = useRef<Application | null>(null);
   const graphicsMap = useRef<Map<string, EntityGraphic>>(new Map());
   const sceneContainerRef = useRef<Container | null>(null);
+  const gridContainerRef = useRef<Graphics | null>(null);
   const pendingSyncRef = useRef(false);
   const initedRef = useRef(false);
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef({ x: 0, y: 0, cx: 0, cy: 0 });
+  const spaceDownRef = useRef(false);
+  const gridVisibleRef = useRef(true);
+  const snapGridRef = useRef(20);
 
   useEffect(() => {
     if (initedRef.current) return;
@@ -38,7 +55,7 @@ export function useSceneCanvas(
         await app.init({
           canvas,
           resizeTo: wrapper,
-          background: '#12121e',
+          background: '#10101c',
           antialias: true,
           autoDensity: true,
           resolution: Math.min(window.devicePixelRatio || 1, 2),
@@ -57,6 +74,20 @@ export function useSceneCanvas(
       app.stage.hitArea = app.screen;
 
       drawGrid(app);
+      applyTransform();
+
+      // Wheel zoom
+      canvas.addEventListener('wheel', handleWheel, { passive: false });
+
+      // Middle mouse / Space pan
+      canvas.addEventListener('pointerdown', handlePanStart);
+      canvas.addEventListener('pointermove', handlePanMove);
+      canvas.addEventListener('pointerup', handlePanEnd);
+      canvas.addEventListener('pointerleave', handlePanEnd);
+
+      // Space key for pan mode
+      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keyup', handleKeyUp);
 
       const scheduleSyncScene = () => {
         if (pendingSyncRef.current || destroyed) return;
@@ -78,6 +109,14 @@ export function useSceneCanvas(
       unsubscribe?.();
       graphicsMap.current.clear();
       sceneContainerRef.current = null;
+      gridContainerRef.current = null;
+      canvas.removeEventListener('wheel', handleWheel);
+      canvas.removeEventListener('pointerdown', handlePanStart);
+      canvas.removeEventListener('pointermove', handlePanMove);
+      canvas.removeEventListener('pointerup', handlePanEnd);
+      canvas.removeEventListener('pointerleave', handlePanEnd);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
       if (appRef.current) {
         appRef.current.destroy(true, { children: true });
         appRef.current = null;
@@ -86,21 +125,131 @@ export function useSceneCanvas(
     };
   }, [canvasRef, containerRef, pixiHandledRef]);
 
+  // Expose API
+  apiRef.current = {
+    zoomIn: () => setZoom(zoomRef.current * 1.25),
+    zoomOut: () => setZoom(zoomRef.current / 1.25),
+    resetZoom: () => { zoomRef.current = 1; panRef.current = { x: 0, y: 0 }; applyTransform(); },
+    fitToScreen: () => {
+      const app = appRef.current;
+      if (!app) return;
+      const { width: pw, height: ph } = useEditorStore.getState().project.settings;
+      const sw = app.screen.width;
+      const sh = app.screen.height;
+      const scale = Math.min(sw / pw, sh / ph, 2) * 0.9;
+      zoomRef.current = scale;
+      panRef.current = { x: (sw - pw * scale) / 2, y: (sh - ph * scale) / 2 };
+      applyTransform();
+    },
+    getZoom: () => zoomRef.current,
+  };
+
+  function setZoom(newZoom: number, pivotX?: number, pivotY?: number) {
+    const clamped = Math.max(0.1, Math.min(5, newZoom));
+    const app = appRef.current;
+    if (!app) { zoomRef.current = clamped; applyTransform(); return; }
+    const cx = pivotX ?? app.screen.width / 2;
+    const cy = pivotY ?? app.screen.height / 2;
+    const oldZoom = zoomRef.current;
+    const ratio = clamped / oldZoom;
+    panRef.current.x = cx - (cx - panRef.current.x) * ratio;
+    panRef.current.y = cy - (cy - panRef.current.y) * ratio;
+    zoomRef.current = clamped;
+    applyTransform();
+  }
+
+  function applyTransform() {
+    const sc = sceneContainerRef.current;
+    if (!sc) return;
+    sc.scale.set(zoomRef.current);
+    sc.position.set(panRef.current.x, panRef.current.y);
+    updateGrid();
+    (window as any).__sceneTransform = { zoom: zoomRef.current, panX: panRef.current.x, panY: panRef.current.y };
+  }
+
+  function handleWheel(e: WheelEvent) {
+    e.preventDefault();
+    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const px = rect ? e.clientX - rect.left : undefined;
+    const py = rect ? e.clientY - rect.top : undefined;
+    setZoom(zoomRef.current * factor, px, py);
+  }
+
+  function handleKeyDown(e: KeyboardEvent) {
+    if (e.code === 'Space' && !e.repeat) {
+      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+      spaceDownRef.current = true;
+      if (canvasRef.current) canvasRef.current.style.cursor = 'grab';
+    }
+  }
+
+  function handleKeyUp(e: KeyboardEvent) {
+    if (e.code === 'Space') {
+      spaceDownRef.current = false;
+      if (!isPanningRef.current && canvasRef.current) canvasRef.current.style.cursor = '';
+    }
+  }
+
+  function handlePanStart(e: PointerEvent) {
+    if (e.button === 1 || (e.button === 0 && spaceDownRef.current)) {
+      isPanningRef.current = true;
+      panStartRef.current = { x: e.clientX, y: e.clientY, cx: panRef.current.x, cy: panRef.current.y };
+      if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
+      e.preventDefault();
+    }
+  }
+
+  function handlePanMove(e: PointerEvent) {
+    if (!isPanningRef.current) return;
+    panRef.current.x = panStartRef.current.cx + (e.clientX - panStartRef.current.x);
+    panRef.current.y = panStartRef.current.cy + (e.clientY - panStartRef.current.y);
+    applyTransform();
+  }
+
+  function handlePanEnd() {
+    if (!isPanningRef.current) return;
+    isPanningRef.current = false;
+    if (canvasRef.current) canvasRef.current.style.cursor = spaceDownRef.current ? 'grab' : '';
+  }
+
   function drawGrid(app: Application) {
     const grid = new Graphics();
-    const w = app.screen.width;
-    const h = app.screen.height;
-    const step = 40;
+    gridContainerRef.current = grid;
+    app.stage.addChildAt(grid, 0);
+    updateGrid();
+  }
 
-    grid.setStrokeStyle({ width: 1, color: 0x1e1e30, alpha: 0.5 });
-    for (let x = 0; x <= w; x += step) {
-      grid.moveTo(x, 0).lineTo(x, h);
+  function updateGrid() {
+    const grid = gridContainerRef.current;
+    const app = appRef.current;
+    if (!grid || !app) return;
+    grid.clear();
+    if (!gridVisibleRef.current) return;
+
+    const zoom = zoomRef.current;
+    const { width: pw, height: ph } = useEditorStore.getState().project.settings;
+    const ox = panRef.current.x;
+    const oy = panRef.current.y;
+
+    let step = snapGridRef.current;
+    if (zoom < 0.3) step = 80;
+    else if (zoom < 0.6) step = 40;
+
+    grid.setStrokeStyle({ width: 1, color: 0x1a1a30, alpha: 0.6 });
+    for (let x = 0; x <= pw; x += step) {
+      const sx = ox + x * zoom;
+      grid.moveTo(sx, oy).lineTo(sx, oy + ph * zoom);
     }
-    for (let y = 0; y <= h; y += step) {
-      grid.moveTo(0, y).lineTo(w, y);
+    for (let y = 0; y <= ph; y += step) {
+      const sy = oy + y * zoom;
+      grid.moveTo(ox, sy).lineTo(ox + pw * zoom, sy);
     }
     grid.stroke();
-    app.stage.addChildAt(grid, 0);
+
+    // Scene border
+    grid.setStrokeStyle({ width: 2, color: 0x2a2a50, alpha: 0.8 });
+    grid.rect(ox, oy, pw * zoom, ph * zoom).stroke();
   }
 
   function syncScene() {
@@ -176,10 +325,25 @@ export function useSceneCanvas(
       });
       (graphic as PixiText).anchor.set(0.5);
     } else if (hasSprite) {
-      graphic = new Graphics();
-      const sprite = entity.components.find(c => c.type === 'sprite') as
+      const spriteComp = entity.components.find(c => c.type === 'sprite') as
         | Extract<ComponentData, { type: 'sprite' }> | undefined;
-      drawShape(graphic, entity.type, sprite?.data);
+
+      if (spriteComp?.data.imageAssetId) {
+        const asset = useEditorStore.getState().project.assets.find(a => a.id === spriteComp.data.imageAssetId);
+        if (asset) {
+          graphic = new Graphics();
+          const w = spriteComp.data.width;
+          const h = spriteComp.data.height;
+          graphic.rect(-w / 2, -h / 2, w, h).fill({ color: 0x333333, alpha: 0.3 });
+          loadImageSprite(container, asset.dataUrl, w, h);
+        } else {
+          graphic = new Graphics();
+          drawShape(graphic, entity.type, spriteComp?.data);
+        }
+      } else {
+        graphic = new Graphics();
+        drawShape(graphic, entity.type, spriteComp?.data);
+      }
     } else {
       graphic = new Graphics();
       drawShape(graphic, entity.type, undefined);
@@ -222,7 +386,6 @@ export function useSceneCanvas(
       drawShape(eg.graphic, entity.type, sprite?.data);
     }
 
-    // Remove only selection borders (keep base children: bg + graphic)
     while (eg.container.children.length > eg.baseChildCount) {
       const child = eg.container.children[eg.container.children.length - 1];
       eg.container.removeChild(child);
@@ -232,6 +395,18 @@ export function useSceneCanvas(
     if (entity.id === selectedId) {
       drawSelectionBorder(eg.container, entity);
     }
+  }
+
+  async function loadImageSprite(container: Container, dataUrl: string, w: number, h: number) {
+    try {
+      const texture = await Assets.load(dataUrl);
+      if (!texture) return;
+      const spr = new Sprite(texture);
+      spr.anchor.set(0.5);
+      spr.width = w;
+      spr.height = h;
+      container.addChildAt(spr, 0);
+    } catch { /* asset load failed */ }
   }
 
   function drawShape(g: Graphics, type: string, sprite?: SpriteData) {
@@ -261,7 +436,6 @@ export function useSceneCanvas(
       w = sprite.data.width;
       h = sprite.data.height;
     } else {
-      // Text-only entities: estimate size from text
       const textComp = entity.components.find(c => c.type === 'text') as
         | Extract<ComponentData, { type: 'text' }> | undefined;
       if (textComp) {
@@ -271,13 +445,13 @@ export function useSceneCanvas(
     }
 
     const pad = 4;
-    border.setStrokeStyle({ width: 2, color: 0x7c5cfc });
+    border.setStrokeStyle({ width: 2, color: 0x7c6bf5 });
     border.rect(-w / 2 - pad, -h / 2 - pad, w + pad * 2, h + pad * 2);
     border.stroke();
 
     const cs = 6;
     for (const [cx, cy] of [[-w/2-pad, -h/2-pad], [w/2+pad, -h/2-pad], [-w/2-pad, h/2+pad], [w/2+pad, h/2+pad]]) {
-      border.rect(cx - cs/2, cy - cs/2, cs, cs).fill({ color: 0x7c5cfc });
+      border.rect(cx - cs/2, cy - cs/2, cs, cs).fill({ color: 0x7c6bf5 });
     }
     container.addChild(border);
   }
@@ -287,12 +461,11 @@ export function useSceneCanvas(
     let dragOffset = { x: 0, y: 0 };
 
     eg.container.on('pointerdown', (e) => {
+      if (isPanningRef.current || spaceDownRef.current) return;
       const entity = useEditorStore.getState().getEntity(entityId);
       if (!entity || entity.locked) return;
 
-      // Signal React that PixiJS handled this click
       pixiHandledRef.current = true;
-
       useEditorStore.getState().selectEntity(entityId);
       dragging = true;
       const pos = e.getLocalPosition(eg.container.parent);
@@ -304,7 +477,17 @@ export function useSceneCanvas(
     eg.container.on('globalpointermove', (e) => {
       if (!dragging) return;
       const pos = e.getLocalPosition(eg.container.parent);
-      eg.container.position.set(pos.x - dragOffset.x, pos.y - dragOffset.y);
+      let nx = pos.x - dragOffset.x;
+      let ny = pos.y - dragOffset.y;
+
+      // Grid snapping
+      const snap = snapGridRef.current;
+      if (snap > 0 && !e.shiftKey) {
+        nx = Math.round(nx / snap) * snap;
+        ny = Math.round(ny / snap) * snap;
+      }
+
+      eg.container.position.set(nx, ny);
     });
 
     const endDrag = () => {

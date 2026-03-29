@@ -93,7 +93,12 @@ export type BehaviorType =
   | 'progress-bar'
   | 'dialogue-box'
   | 'tween'
-  | 'play-sound';
+  | 'play-sound'
+  | 'particle-emitter'
+  | 'camera-follow'
+  | 'screen-wrap'
+  | 'scene-switch'
+  | 'raycast-sensor';
 
 export interface BehaviorConfig {
   type: BehaviorType;
@@ -140,6 +145,11 @@ export const BEHAVIOR_DEFAULTS: Record<BehaviorType, Record<string, number | str
   'dialogue-box':      { dialogues: '你好！|欢迎来到游戏世界|祝你好运！', speed: 30, autoAdvance: false },
   'tween':             { property: 'y', from: 0, to: -20, duration: 1, loop: true, easing: 'sine', yoyo: true },
   'play-sound':        { soundId: '', trigger: 'start', volume: 1 },
+  'particle-emitter':  { count: 20, speed: 3, lifetime: 1, spread: 360, color: '#ffaa00', size: 4, gravity: 0.5, continuous: true, interval: 0.05 },
+  'camera-follow':     { smoothing: 0.08, offsetX: 0, offsetY: 0, deadZone: 30 },
+  'screen-wrap':       { margin: 10 },
+  'scene-switch':      { targetScene: '', trigger: 'collision', fadeTime: 0.5 },
+  'raycast-sensor':    { direction: 0, maxDistance: 300, showBeam: true, beamColor: '#ff0000', damageOnHit: 0, eventOnHit: 'raycast-hit' },
 };
 
 // ─── Entity & Prefabs ───
@@ -156,10 +166,11 @@ export type EntityType =
   | 'clicker-button' | 'auto-producer' | 'upgrade-button'
   | 'card' | 'card-deck' | 'card-slot'
   | 'dialogue-manager' | 'choice-button' | 'character-portrait'
+  | 'particle-fire' | 'particle-explosion' | 'particle-snow' | 'particle-sparkle'
   | 'rectangle' | 'circle' | 'triangle' | 'text' | 'container';
 
 export type PrefabCategory = 'characters' | 'items' | 'terrain' | 'ui' | 'zones' | 'basic'
-  | 'shooter' | 'puzzle' | 'clicker' | 'card' | 'visual-novel';
+  | 'shooter' | 'puzzle' | 'clicker' | 'card' | 'visual-novel' | 'effects';
 
 export interface PrefabDefinition {
   type: EntityType;

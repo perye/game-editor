@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, type RefObject } from 'react';
-import { Application, Graphics, Text as PixiText, Container, TextStyle } from 'pixi.js';
+import { Application, Graphics, Text as PixiText, Container, TextStyle, Sprite as PixiSprite, Assets } from 'pixi.js';
 import { useEditorStore } from '@/store/useEditorStore';
 import type { SpriteData } from '@/types';
 import { hexToNumber } from '@/utils/colors';
@@ -9,6 +9,7 @@ import { VariableStore } from '@/engine/variableSystem';
 import { InputManager } from '@/engine/inputManager';
 import { compileGraph, executeGraph, type CompiledGraph } from '@/engine/nodeExecutor';
 import { useNodeGraphStore } from '@/store/useNodeGraphStore';
+import { useAnimationStore } from '@/store/useAnimationStore';
 
 export function usePreviewCanvas(
   canvasRef: RefObject<HTMLCanvasElement | null>,
@@ -85,6 +86,13 @@ export function usePreviewCanvas(
           runtime.keys = input.keys;
           tickRuntime(runtime, ticker.deltaTime / 60);
 
+          // Handle scene switching
+          if (runtime.pendingSceneSwitch) {
+            switchToScene(runtime.pendingSceneSwitch);
+            runtime.pendingSceneSwitch = null;
+            return;
+          }
+
           // Execute node graph
           const graph = graphRef.current;
           if (graph) {
@@ -96,8 +104,30 @@ export function usePreviewCanvas(
             if (input.mouse.justPressed) executeGraph(graph, 'click', runtime);
           }
 
+          // Apply animation keyframes
+          const animStore = useAnimationStore.getState();
+          if (animStore.tracks.length > 0) {
+            const animTime = runtime.elapsed % (animStore.duration || 5);
+            const animUpdates = animStore.evaluateAt(animTime);
+            for (const [entityId, props] of animUpdates) {
+              const re = runtime.entities.get(entityId);
+              if (!re) continue;
+              for (const [prop, value] of Object.entries(props)) {
+                if (prop === 'x') re.x = value;
+                else if (prop === 'y') re.y = value;
+                else if (prop === 'rotation') re.rotation = value;
+                else if (prop === 'scaleX') re.scaleX = value;
+                else if (prop === 'scaleY') re.scaleY = value;
+                else if (prop === 'width') re.width = value;
+                else if (prop === 'height') re.height = value;
+              }
+            }
+          }
+
           updateGraphics(runtime);
+          drawPhysicsDebug(runtime);
           updateOverlay(runtime, app);
+          updateTransition(ticker.deltaTime / 60, app);
           input.update();
         }
       });
@@ -172,6 +202,9 @@ export function usePreviewCanvas(
       removeQueue: [],
       worldWidth: state.project.settings.width,
       worldHeight: state.project.settings.height,
+      cameraX: state.project.settings.width / 2,
+      cameraY: state.project.settings.height / 2,
+      pendingSceneSwitch: null,
     };
 
     // Compile node graph
@@ -183,6 +216,67 @@ export function usePreviewCanvas(
     graphStartedRef.current = false;
 
     input.reset();
+    rebuildScene();
+  }
+
+  const transitionRef = useRef<{ phase: 'out' | 'in'; progress: number; targetSceneId: string; duration: number } | null>(null);
+
+  function switchToScene(sceneId: string) {
+    const fadeDuration = 0.4;
+    transitionRef.current = { phase: 'out', progress: 0, targetSceneId: sceneId, duration: fadeDuration };
+  }
+
+  function updateTransition(dt: number, app: Application) {
+    const t = transitionRef.current;
+    if (!t) return;
+
+    t.progress += dt / t.duration;
+
+    if (t.phase === 'out' && t.progress >= 1) {
+      performSceneSwitch(t.targetSceneId);
+      t.phase = 'in';
+      t.progress = 0;
+    }
+
+    if (t.phase === 'in' && t.progress >= 1) {
+      transitionRef.current = null;
+    }
+
+    // Draw fade overlay
+    const overlay = overlayRef.current;
+    if (overlay) {
+      const alpha = t.phase === 'out' ? Math.min(1, t.progress) : Math.max(0, 1 - t.progress);
+      if (alpha > 0) {
+        const fadeGfx = new Graphics();
+        fadeGfx.rect(0, 0, app.screen.width, app.screen.height).fill({ color: 0x000000, alpha });
+        overlay.addChild(fadeGfx);
+      }
+    }
+  }
+
+  function performSceneSwitch(sceneId: string) {
+    const state = useEditorStore.getState();
+    const targetScene = state.project.scenes.find(s => s.id === sceneId);
+    if (!targetScene || !runtimeRef.current) return;
+
+    const runtime = runtimeRef.current;
+    runtime.entities.clear();
+    runtime.spawnQueue = [];
+    runtime.removeQueue = [];
+    runtime.gameState = { ...targetScene.gameState };
+    runtime.overlay = null;
+    runtime.pendingSceneSwitch = null;
+    runtime.cameraX = state.project.settings.width / 2;
+    runtime.cameraY = state.project.settings.height / 2;
+
+    for (const entityId of targetScene.rootEntities) {
+      const entity = targetScene.entities[entityId];
+      if (!entity || !entity.visible) continue;
+      const re = createRuntimeEntity(entity);
+      runtime.entities.set(re.id, re);
+    }
+
+    gfxMapRef.current.clear();
     rebuildScene();
   }
 
@@ -247,7 +341,12 @@ export function usePreviewCanvas(
     container.rotation = (re.rotation * Math.PI) / 180;
     container.scale.set(re.scaleX, re.scaleY);
 
-    if (re.color && re.color !== '#00000000') {
+    if (re.imageAssetId) {
+      const asset = useEditorStore.getState().project.assets.find(a => a.id === re.imageAssetId);
+      if (asset) {
+        loadPreviewSprite(container, asset.dataUrl, re.width, re.height);
+      }
+    } else if (re.color && re.color !== '#00000000') {
       const g = new Graphics();
       drawShape(g, re.shape, { color: re.color, width: re.width, height: re.height, shape: re.shape as SpriteData['shape'] });
       container.addChild(g);
@@ -269,9 +368,35 @@ export function usePreviewCanvas(
     return container;
   }
 
+  async function loadPreviewSprite(container: Container, dataUrl: string, w: number, h: number) {
+    try {
+      const texture = await Assets.load(dataUrl);
+      if (!texture) return;
+      const spr = new PixiSprite(texture);
+      spr.anchor.set(0.5);
+      spr.width = w;
+      spr.height = h;
+      container.addChildAt(spr, 0);
+    } catch { /* ignore */ }
+  }
+
   function updateGraphics(runtime: RuntimeState) {
     const sceneContainer = sceneContainerRef.current;
-    if (!sceneContainer) return;
+    const app = appRef.current;
+    if (!sceneContainer || !app) return;
+
+    // Camera offset
+    const pw = runtime.worldWidth;
+    const ph = runtime.worldHeight;
+    const sw = app.screen.width;
+    const sh = app.screen.height;
+    const scale = Math.min(sw / pw, sh / ph, 1);
+    const camOffsetX = pw / 2 - runtime.cameraX;
+    const camOffsetY = ph / 2 - runtime.cameraY;
+    sceneContainer.position.set(
+      (sw - pw * scale) / 2 + camOffsetX * scale,
+      (sh - ph * scale) / 2 + camOffsetY * scale
+    );
 
     // Add newly spawned entities
     for (const re of runtime.entities.values()) {
@@ -279,6 +404,17 @@ export function usePreviewCanvas(
         const gfx = createRuntimeGraphic(re);
         sceneContainer.addChild(gfx);
         gfxMapRef.current.set(re.id, gfx);
+      }
+    }
+
+    // Remove particle containers from previous frame
+    for (const re of runtime.entities.values()) {
+      const key = `particles-${re.id}`;
+      const existing = gfxMapRef.current.get(key);
+      if (existing) {
+        sceneContainer.removeChild(existing);
+        existing.destroy({ children: true });
+        gfxMapRef.current.delete(key);
       }
     }
 
@@ -294,13 +430,46 @@ export function usePreviewCanvas(
       gfx.rotation = (re.rotation * Math.PI) / 180;
       gfx.scale.set(re.scaleX, re.scaleY);
 
-      // Flash effect
       gfx.alpha = re.flashTimer > 0 ? (Math.sin(re.flashTimer * 30) > 0 ? 0.3 : 1) : 1;
 
       for (const child of gfx.children) {
         if (child instanceof PixiText && re.text !== undefined) {
           child.text = re.text;
         }
+      }
+
+      // Render raycast beams
+      if (re.raycastBeams && re.raycastBeams.length > 0) {
+        const beamKey = `beams-${re.id}`;
+        const existingBeam = gfxMapRef.current.get(beamKey);
+        if (existingBeam) {
+          sceneContainer.removeChild(existingBeam);
+          existingBeam.destroy({ children: true });
+        }
+        const beamContainer = new Container();
+        const bg = new Graphics();
+        for (const beam of re.raycastBeams) {
+          bg.setStrokeStyle({ width: 2, color: hexToNumber(beam.color), alpha: 0.7 });
+          bg.moveTo(beam.x1, beam.y1).lineTo(beam.x2, beam.y2).stroke();
+          bg.circle(beam.x2, beam.y2, 3).fill({ color: hexToNumber(beam.color), alpha: 0.9 });
+        }
+        beamContainer.addChild(bg);
+        sceneContainer.addChild(beamContainer);
+        gfxMapRef.current.set(beamKey, beamContainer);
+      }
+
+      // Render particles
+      if (re.particles.length > 0) {
+        const pContainer = new Container();
+        const pg = new Graphics();
+        for (const p of re.particles) {
+          const alpha = Math.max(0, p.life / p.maxLife);
+          const sz = p.size * alpha;
+          pg.circle(p.x, p.y, sz).fill({ color: hexToNumber(p.color), alpha });
+        }
+        pContainer.addChild(pg);
+        sceneContainer.addChild(pContainer);
+        gfxMapRef.current.set(`particles-${re.id}`, pContainer);
       }
     }
   }
@@ -362,5 +531,67 @@ export function usePreviewCanvas(
     fpsCallbackRef.current = cb;
   }, []);
 
-  return { onFpsUpdate };
+  const debugRef = useRef(false);
+  const setDebugMode = useCallback((enabled: boolean) => {
+    debugRef.current = enabled;
+  }, []);
+
+  // Physics debug overlay rendering
+  function drawPhysicsDebug(runtime: RuntimeState) {
+    if (!debugRef.current) return;
+    const sceneContainer = sceneContainerRef.current;
+    if (!sceneContainer) return;
+
+    const existingDebug = gfxMapRef.current.get('__physics_debug__');
+    if (existingDebug) {
+      sceneContainer.removeChild(existingDebug);
+      existingDebug.destroy({ children: true });
+    }
+
+    const debugContainer = new Container();
+    const g = new Graphics();
+
+    for (const re of runtime.entities.values()) {
+      if (!re.alive || !re.visible) continue;
+
+      // Collision shape
+      const hasRB = !!re.rigidBody;
+      const color = hasRB
+        ? (re.rigidBody?.isStatic ? 0x00ff00 : re.rigidBody?.isTrigger ? 0xffff00 : 0x00aaff)
+        : 0x666666;
+
+      g.setStrokeStyle({ width: 1.5, color, alpha: 0.7 });
+
+      if (re.shape === 'circle') {
+        const r = Math.min(re.width, re.height) / 2;
+        g.circle(re.x, re.y, r).stroke();
+      } else {
+        g.rect(re.x - re.width / 2, re.y - re.height / 2, re.width, re.height).stroke();
+      }
+
+      // Velocity vector
+      if (hasRB && re.rigidBody) {
+        const vx = re.rigidBody.velocityX || 0;
+        const vy = re.rigidBody.velocityY || 0;
+        if (Math.abs(vx) > 0.1 || Math.abs(vy) > 0.1) {
+          g.setStrokeStyle({ width: 2, color: 0xff4444, alpha: 0.8 });
+          g.moveTo(re.x, re.y).lineTo(re.x + vx * 5, re.y + vy * 5).stroke();
+          const arrowLen = 4;
+          const angle = Math.atan2(vy, vx);
+          g.moveTo(re.x + vx * 5, re.y + vy * 5)
+            .lineTo(re.x + vx * 5 - Math.cos(angle - 0.4) * arrowLen, re.y + vy * 5 - Math.sin(angle - 0.4) * arrowLen)
+            .stroke();
+          g.moveTo(re.x + vx * 5, re.y + vy * 5)
+            .lineTo(re.x + vx * 5 - Math.cos(angle + 0.4) * arrowLen, re.y + vy * 5 - Math.sin(angle + 0.4) * arrowLen)
+            .stroke();
+        }
+      }
+    }
+
+    debugContainer.addChild(g);
+    sceneContainer.addChild(debugContainer);
+    gfxMapRef.current.set('__physics_debug__', debugContainer);
+  }
+
+  return { onFpsUpdate, setDebugMode };
 }

@@ -10,6 +10,7 @@ import {
   Box, Crosshair, ToggleLeft,
   Factory, ArrowUpCircle, CreditCard, Layers, SquareDashedBottomCode,
   MessageSquareText, List, UserCircle,
+  Sparkles, Snowflake,
 } from 'lucide-react';
 import type { PrefabDefinition, PrefabCategory } from '@/types';
 import { PREFABS } from '@/engine/prefabs';
@@ -38,6 +39,8 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   'message-square-text': <MessageSquareText size={16} />,
   'list': <List size={16} />,
   'user-circle': <UserCircle size={16} />,
+  'sparkles': <Sparkles size={16} />,
+  'snowflake': <Snowflake size={16} />,
 };
 
 const CATEGORY_META: Record<PrefabCategory, { label: string; color: string }> = {
@@ -51,13 +54,14 @@ const CATEGORY_META: Record<PrefabCategory, { label: string; color: string }> = 
   clicker:       { label: '点击放置类', color: 'text-orange-400' },
   card:          { label: '卡牌类', color: 'text-amber-400' },
   'visual-novel': { label: '视觉小说类', color: 'text-pink-400' },
+  effects:       { label: '特效 & 粒子', color: 'text-amber-300' },
   basic:         { label: '基础形状', color: 'text-text-muted' },
 };
 
 const CATEGORY_ORDER: PrefabCategory[] = [
   'characters', 'items', 'terrain', 'ui', 'zones',
   'shooter', 'puzzle', 'clicker', 'card', 'visual-novel',
-  'basic',
+  'effects', 'basic',
 ];
 
 export function ComponentLibrary() {
@@ -116,8 +120,11 @@ function DraggableComponent({ item }: { item: PrefabDefinition }) {
 
   return (
     <div ref={setNodeRef} {...listeners} {...attributes}
+      draggable={false}
+      onDragStart={(e) => e.preventDefault()}
+      style={{ touchAction: 'none', WebkitUserDrag: 'none' } as React.CSSProperties}
       className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-grab active:cursor-grabbing
-        border transition-all duration-150
+        border transition-all duration-150 select-none
         ${isDragging
           ? 'opacity-60 border-accent bg-accent/10 shadow-lg scale-95'
           : 'border-transparent hover:border-panel-border hover:bg-surface-hover hover:shadow-sm'}`}>

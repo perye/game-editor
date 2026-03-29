@@ -476,6 +476,52 @@ export const PREFABS: PrefabDefinition[] = [
     defaultSprite: { color: '#7c5cfc', width: 80, height: 80, shape: 'triangle' },
     defaultBehaviors: [],
   },
+
+  // ─── Effects ───
+  {
+    type: 'particle-fire',
+    label: '火焰特效',
+    category: 'effects',
+    icon: 'flame',
+    description: '持续燃烧的火焰粒子效果',
+    defaultSprite: { color: '#00000000', width: 10, height: 10, shape: 'circle' },
+    defaultBehaviors: [
+      { type: 'particle-emitter', enabled: true, params: { count: 30, speed: 2, lifetime: 0.8, spread: 40, color: '#ff6600', size: 5, gravity: -1, continuous: true, interval: 0.03 } },
+    ],
+  },
+  {
+    type: 'particle-explosion',
+    label: '爆炸特效',
+    category: 'effects',
+    icon: 'zap',
+    description: '一次性爆炸粒子效果',
+    defaultSprite: { color: '#00000000', width: 10, height: 10, shape: 'circle' },
+    defaultBehaviors: [
+      { type: 'particle-emitter', enabled: true, params: { count: 40, speed: 6, lifetime: 0.6, spread: 360, color: '#ffcc00', size: 5, gravity: 2, continuous: false, interval: 0 } },
+    ],
+  },
+  {
+    type: 'particle-snow',
+    label: '雪花特效',
+    category: 'effects',
+    icon: 'snowflake',
+    description: '持续飘落的雪花粒子',
+    defaultSprite: { color: '#00000000', width: 10, height: 10, shape: 'circle' },
+    defaultBehaviors: [
+      { type: 'particle-emitter', enabled: true, params: { count: 50, speed: 1, lifetime: 3, spread: 60, color: '#ffffff', size: 3, gravity: 0.1, continuous: true, interval: 0.1 } },
+    ],
+  },
+  {
+    type: 'particle-sparkle',
+    label: '闪光特效',
+    category: 'effects',
+    icon: 'sparkles',
+    description: '闪烁的光芒粒子',
+    defaultSprite: { color: '#00000000', width: 10, height: 10, shape: 'circle' },
+    defaultBehaviors: [
+      { type: 'particle-emitter', enabled: true, params: { count: 15, speed: 2, lifetime: 0.5, spread: 360, color: '#ffee88', size: 3, gravity: 0, continuous: true, interval: 0.08 } },
+    ],
+  },
 ];
 
 export function getPrefab(type: string): PrefabDefinition | undefined {

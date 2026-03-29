@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { Play, Pause, RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
+import { Play, Pause, RotateCcw, Maximize2, Minimize2, Bug } from 'lucide-react';
 import { useEditorStore } from '@/store/useEditorStore';
 import { usePreviewCanvas } from './usePreviewCanvas';
 
@@ -11,7 +11,8 @@ export function RightPreview() {
   const setPlaying = useEditorStore(s => s.setPlaying);
   const [fps, setFps] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const { onFpsUpdate } = usePreviewCanvas(canvasRef, containerRef);
+  const [debugPhysics, setDebugPhysics] = useState(false);
+  const { onFpsUpdate, setDebugMode } = usePreviewCanvas(canvasRef, containerRef);
 
   useEffect(() => { onFpsUpdate(setFps); }, [onFpsUpdate]);
 
@@ -46,6 +47,11 @@ export function RightPreview() {
           <button onClick={() => { setPlaying(false); setTimeout(() => setPlaying(true), 50); }}
             className="p-1.5 rounded-md text-text-secondary hover:bg-surface-hover transition-all active:scale-90" title="重新开始">
             <RotateCcw size={13} />
+          </button>
+          <button onClick={() => { setDebugPhysics(d => { const next = !d; setDebugMode(next); return next; }); }}
+            className={`p-1.5 rounded-md transition-all active:scale-90 ${debugPhysics ? 'bg-amber-500/20 text-amber-400' : 'text-text-secondary hover:bg-surface-hover'}`}
+            title="物理调试">
+            <Bug size={13} />
           </button>
           <button onClick={toggleFullscreen}
             className="p-1.5 rounded-md text-text-secondary hover:bg-surface-hover transition-all active:scale-90" title={isFullscreen ? '退出全屏' : '全屏'}>

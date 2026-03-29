@@ -64,6 +64,10 @@ export class VariableStore {
     }
   }
 
+  getAll(): Map<string, VariableValue> {
+    return new Map(this.globals);
+  }
+
   clear() {
     this.globals.clear();
     this.entityVars.clear();

@@ -2,6 +2,7 @@ import * as Tabs from '@radix-ui/react-tabs';
 import { Monitor, GitBranch, Code, Film } from 'lucide-react';
 import { useEditorStore } from '@/store/useEditorStore';
 import { SceneEditor } from './scene/SceneEditor';
+import { SceneManager } from './scene/SceneManager';
 import { NodeGraphEditor } from './node-graph/NodeGraphEditor';
 import { CodeEditorPanel } from './code/CodeEditorPanel';
 import { AnimationTimeline } from './animation/AnimationTimeline';
@@ -21,6 +22,7 @@ export function CenterEditor() {
           <TabTrigger value="code" icon={<Code size={13} />} label="代码编辑" />
           <TabTrigger value="animation" icon={<Film size={13} />} label="动画时间轴" />
         </Tabs.List>
+        {editorTab === 'scene' && <SceneManager />}
         <Tabs.Content value="scene" className="flex-1 relative overflow-hidden" forceMount style={{ display: editorTab === 'scene' ? 'block' : 'none' }}>
           <SceneEditor />
         </Tabs.Content>

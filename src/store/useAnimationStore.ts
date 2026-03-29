@@ -93,4 +93,58 @@ export const useAnimationStore = create<AnimationState>((set, get) => ({
   setDuration: (duration) => set({ duration: Math.max(1, duration) }),
   setPlaying: (playing) => set({ isPlaying: playing }),
   selectTrack: (id) => set({ selectedTrackId: id }),
+
+  /**
+   * Evaluate all tracks at a given time and return entity property updates.
+   */
+  evaluateAt: (time: number): Map<string, Record<string, number>> => {
+    const result = new Map<string, Record<string, number>>();
+    for (const track of get().tracks) {
+      if (track.keyframes.length === 0) continue;
+      const props: Record<string, number> = {};
+
+      const byProp = new Map<string, Keyframe[]>();
+      for (const kf of track.keyframes) {
+        const list = byProp.get(kf.property) || [];
+        list.push(kf);
+        byProp.set(kf.property, list);
+      }
+
+      for (const [prop, kfs] of byProp) {
+        if (kfs.length === 0) continue;
+        const sorted = [...kfs].sort((a, b) => a.time - b.time);
+
+        if (time <= sorted[0].time) {
+          props[prop] = sorted[0].value;
+        } else if (time >= sorted[sorted.length - 1].time) {
+          props[prop] = sorted[sorted.length - 1].value;
+        } else {
+          let prev = sorted[0], next = sorted[1];
+          for (let i = 0; i < sorted.length - 1; i++) {
+            if (time >= sorted[i].time && time <= sorted[i + 1].time) {
+              prev = sorted[i];
+              next = sorted[i + 1];
+              break;
+            }
+          }
+          const range = next.time - prev.time;
+          const raw = range > 0 ? (time - prev.time) / range : 0;
+          const t = applyEasing(raw, next.easing);
+          props[prop] = prev.value + (next.value - prev.value) * t;
+        }
+      }
+
+      result.set(track.entityId, props);
+    }
+    return result;
+  },
 }));
+
+function applyEasing(t: number, easing: Keyframe['easing']): number {
+  switch (easing) {
+    case 'easeIn': return t * t;
+    case 'easeOut': return t * (2 - t);
+    case 'easeInOut': return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+    default: return t;
+  }
+}

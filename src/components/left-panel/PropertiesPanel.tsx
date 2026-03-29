@@ -41,6 +41,11 @@ const BEHAVIOR_LABELS: Record<BehaviorType, string> = {
   'dialogue-box': '对话框',
   'tween': '补间动画',
   'play-sound': '播放音效',
+  'particle-emitter': '粒子发射器',
+  'camera-follow': '相机跟随',
+  'screen-wrap': '屏幕环绕',
+  'scene-switch': '场景切换',
+  'raycast-sensor': '射线检测',
 };
 
 const PARAM_LABELS: Record<string, string> = {
@@ -82,12 +87,22 @@ const PARAM_LABELS: Record<string, string> = {
   gravityScale: '重力缩放', friction: '摩擦力', restitution: '弹性',
   isStatic: '静态', isKinematic: '运动学', collisionLayer: '碰撞层',
   collisionMask: '碰撞掩码', isTrigger: '触发器模式',
+  count: '粒子数量', spread: '扩散角度', size: '粒子大小', gravity: '粒子重力',
+  continuous: '持续发射', color: '粒子颜色',
+  smoothing: '平滑度', deadZone: '死区范围', margin: '边缘距离',
+  targetScene: '目标场景ID', fadeTime: '过渡时间',
+  maxDistance: '最大距离', showBeam: '显示射线', beamColor: '射线颜色',
+  damageOnHit: '命中伤害', eventOnHit: '命中事件',
 };
 
 const ALL_BEHAVIOR_TYPES = Object.keys(BEHAVIOR_LABELS) as BehaviorType[];
 
 export function PropertiesPanel() {
-  const selectedEntity = useEditorStore(s => s.getSelectedEntity());
+  const selectedEntity = useEditorStore(s => {
+    if (!s.selectedEntityId) return undefined;
+    const scene = s.project.scenes.find(sc => sc.id === s.project.activeSceneId) || s.project.scenes[0];
+    return scene?.entities[s.selectedEntityId];
+  });
   const updateComponent = useEditorStore(s => s.updateComponent);
   const updateEntityName = useEditorStore(s => s.updateEntityName);
   const updateBehavior = useEditorStore(s => s.updateBehavior);
@@ -145,6 +160,12 @@ export function PropertiesPanel() {
 
       {sprite && (
         <Section title="外观">
+          <Field label="贴图">
+            <ImageAssetPicker
+              currentId={sprite.data.imageAssetId}
+              onSelect={(id) => updateSprite({ imageAssetId: id })}
+            />
+          </Field>
           <Field label="颜色">
             <div className="flex items-center gap-2">
               <input type="color" value={sprite.data.color} onChange={e => updateSprite({ color: e.target.value })} className="w-7 h-7 rounded border border-panel-border cursor-pointer bg-transparent" />
@@ -288,4 +309,29 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 function NumInput({ value, onChange, step = 1, min, max }: { value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number }) {
   return <input type="number" value={Math.round(value * 100) / 100} onChange={e => onChange(parseFloat(e.target.value) || 0)} step={step} min={min} max={max} className="input-field" />;
+}
+
+function ImageAssetPicker({ currentId, onSelect }: { currentId?: string; onSelect: (id?: string) => void }) {
+  const assets = useEditorStore(s => s.project.assets.filter(a => a.type === 'image'));
+  const current = assets.find(a => a.id === currentId);
+
+  return (
+    <div className="space-y-1.5">
+      {current && (
+        <div className="flex items-center gap-2 bg-surface rounded-md border border-panel-border p-1.5">
+          <img src={current.dataUrl} alt={current.name} className="w-8 h-8 rounded object-cover" />
+          <span className="text-[10px] text-text-primary flex-1 truncate">{current.name}</span>
+          <button onClick={() => onSelect(undefined)} className="text-[10px] text-danger hover:text-danger/80">移除</button>
+        </div>
+      )}
+      <select value={currentId || ''} onChange={e => onSelect(e.target.value || undefined)}
+        className="input-field text-[10px]">
+        <option value="">无贴图（使用颜色）</option>
+        {assets.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+      </select>
+      {assets.length === 0 && (
+        <span className="text-[9px] text-text-muted">请先在「素材」面板上传图片</span>
+      )}
+    </div>
+  );
 }

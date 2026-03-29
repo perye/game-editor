@@ -12,6 +12,7 @@ import { EditorLayout } from './components/layout/EditorLayout';
 import { useEditorStore } from './store/useEditorStore';
 import { useHistoryStore } from './store/useHistoryStore';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { ContextMenuProvider } from './components/shared/ContextMenu';
 import type { EntityType } from './types';
 import { getPrefab } from './engine/prefabs';
 
@@ -23,7 +24,7 @@ export default function App() {
   useKeyboardShortcuts();
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -38,12 +39,26 @@ export default function App() {
     const data = event.active.data.current as { type: EntityType; label: string } | undefined;
     if (!data) return;
 
+    const settings = useEditorStore.getState().project.settings;
+    let x = settings.width / 2;
+    let y = settings.height / 2;
+
     const rect = event.over.rect;
-    let x = 200, y = 200;
     if (rect && event.activatorEvent instanceof PointerEvent) {
-      x = Math.round(event.activatorEvent.clientX + event.delta.x - rect.left);
-      y = Math.round(event.activatorEvent.clientY + event.delta.y - rect.top);
+      const screenX = event.activatorEvent.clientX + (event.delta?.x ?? 0) - rect.left;
+      const screenY = event.activatorEvent.clientY + (event.delta?.y ?? 0) - rect.top;
+      const t = (window as any).__sceneTransform as { zoom: number; panX: number; panY: number } | undefined;
+      if (t && t.zoom > 0) {
+        x = Math.round((screenX - t.panX) / t.zoom);
+        y = Math.round((screenY - t.panY) / t.zoom);
+      } else {
+        x = Math.round(screenX);
+        y = Math.round(screenY);
+      }
     }
+
+    x = Math.max(0, Math.min(x, settings.width));
+    y = Math.max(0, Math.min(y, settings.height));
 
     saveSnapshot();
     addEntity(data.type, x, y);
@@ -57,6 +72,7 @@ export default function App() {
           <DragPreview type={activeItem.type} label={activeItem.label} />
         )}
       </DragOverlay>
+      <ContextMenuProvider />
     </DndContext>
   );
 }

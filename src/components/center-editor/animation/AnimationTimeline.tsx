@@ -15,7 +15,11 @@ export function AnimationTimeline() {
   const addKeyframe = useAnimationStore(s => s.addKeyframe);
   const selectedTrackId = useAnimationStore(s => s.selectedTrackId);
   const selectTrack = useAnimationStore(s => s.selectTrack);
-  const selectedEntity = useEditorStore(s => s.getSelectedEntity());
+  const selectedEntity = useEditorStore(s => {
+    if (!s.selectedEntityId) return undefined;
+    const scene = s.project.scenes.find(sc => sc.id === s.project.activeSceneId) || s.project.scenes[0];
+    return scene?.entities[s.selectedEntityId];
+  });
   const timelineRef = useRef<HTMLDivElement>(null);
 
   const handleTimelineClick = useCallback((e: React.MouseEvent) => {

@@ -186,3 +186,115 @@ export function checkAABB(a: RuntimeEntity, b: RuntimeEntity): boolean {
     a.y + a.height / 2 > b.y - b.height / 2
   );
 }
+
+// ─── Raycast System ───
+
+export interface RaycastHit {
+  entity: RuntimeEntity;
+  point: { x: number; y: number };
+  distance: number;
+  normal: { x: number; y: number };
+}
+
+export function raycast(
+  state: RuntimeState,
+  originX: number,
+  originY: number,
+  dirX: number,
+  dirY: number,
+  maxDistance: number = 1000,
+  excludeId?: string,
+  layerMask: number = 0xFFFF,
+): RaycastHit | null {
+  const len = Math.sqrt(dirX * dirX + dirY * dirY);
+  if (len === 0) return null;
+  const ndx = dirX / len;
+  const ndy = dirY / len;
+
+  let closest: RaycastHit | null = null;
+
+  for (const entity of state.entities.values()) {
+    if (!entity.alive || !entity.visible) continue;
+    if (entity.id === excludeId) continue;
+    const layer = entity.rigidBody?.collisionLayer ?? 1;
+    if (!(layer & layerMask)) continue;
+
+    const hit = entity.shape === 'circle'
+      ? rayCircle(originX, originY, ndx, ndy, entity)
+      : rayAABB(originX, originY, ndx, ndy, entity);
+
+    if (hit && hit.distance <= maxDistance) {
+      if (!closest || hit.distance < closest.distance) {
+        closest = hit;
+      }
+    }
+  }
+
+  return closest;
+}
+
+function rayAABB(ox: number, oy: number, dx: number, dy: number, e: RuntimeEntity): RaycastHit | null {
+  const minX = e.x - e.width / 2;
+  const maxX = e.x + e.width / 2;
+  const minY = e.y - e.height / 2;
+  const maxY = e.y + e.height / 2;
+
+  let tmin = -Infinity;
+  let tmax = Infinity;
+  let nx = 0, ny = 0;
+
+  if (dx !== 0) {
+    let t1 = (minX - ox) / dx;
+    let t2 = (maxX - ox) / dx;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > tmin) { tmin = t1; nx = dx > 0 ? -1 : 1; ny = 0; }
+    tmax = Math.min(tmax, t2);
+  } else if (ox < minX || ox > maxX) return null;
+
+  if (dy !== 0) {
+    let t1 = (minY - oy) / dy;
+    let t2 = (maxY - oy) / dy;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > tmin) { tmin = t1; nx = 0; ny = dy > 0 ? -1 : 1; }
+    tmax = Math.min(tmax, t2);
+  } else if (oy < minY || oy > maxY) return null;
+
+  if (tmin > tmax || tmax < 0) return null;
+  const t = tmin >= 0 ? tmin : tmax;
+  if (t < 0) return null;
+
+  return {
+    entity: e,
+    point: { x: ox + dx * t, y: oy + dy * t },
+    distance: t,
+    normal: { x: nx, y: ny },
+  };
+}
+
+function rayCircle(ox: number, oy: number, dx: number, dy: number, e: RuntimeEntity): RaycastHit | null {
+  const r = Math.min(e.width, e.height) / 2;
+  const fx = ox - e.x;
+  const fy = oy - e.y;
+  const a = dx * dx + dy * dy;
+  const b = 2 * (fx * dx + fy * dy);
+  const c = fx * fx + fy * fy - r * r;
+  let discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) return null;
+
+  discriminant = Math.sqrt(discriminant);
+  let t = (-b - discriminant) / (2 * a);
+  if (t < 0) t = (-b + discriminant) / (2 * a);
+  if (t < 0) return null;
+
+  const px = ox + dx * t;
+  const py = oy + dy * t;
+  const nnx = (px - e.x) / r;
+  const nny = (py - e.y) / r;
+
+  return {
+    entity: e,
+    point: { x: px, y: py },
+    distance: t,
+    normal: { x: nnx, y: nny },
+  };
+}

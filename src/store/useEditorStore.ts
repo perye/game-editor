@@ -7,6 +7,7 @@ import { createDemoProject } from '@/engine/demoProject';
 interface EditorState {
   project: GameProject;
   selectedEntityId: string | null;
+  selectedEntityIds: string[];
   editorTab: 'scene' | 'node-graph' | 'code' | 'animation';
   leftPanelTab: 'components' | 'hierarchy' | 'properties';
   isPlaying: boolean;
@@ -17,7 +18,9 @@ interface EditorState {
 
   addEntity: (type: EntityType, x?: number, y?: number) => void;
   removeEntity: (id: string) => void;
-  selectEntity: (id: string | null) => void;
+  selectEntity: (id: string | null, additive?: boolean) => void;
+  selectMultiple: (ids: string[]) => void;
+  removeSelectedEntities: () => void;
   updateEntityName: (id: string, name: string) => void;
   updateComponent: (entityId: string, component: ComponentData) => void;
   updateBehavior: (entityId: string, index: number, behavior: BehaviorConfig) => void;
@@ -42,6 +45,12 @@ interface EditorState {
   setPlaying: (playing: boolean) => void;
   updateSettings: (settings: Partial<GameSettings>) => void;
   updateGameState: (state: Partial<GameState>) => void;
+
+  addScene: (name?: string) => void;
+  removeScene: (sceneId: string) => void;
+  switchScene: (sceneId: string) => void;
+  renameScene: (sceneId: string, name: string) => void;
+  duplicateScene: (sceneId: string) => void;
 
   loadTemplate: (project: GameProject) => void;
   exportProject: () => string;
@@ -72,6 +81,7 @@ function loadSavedProject(): GameProject {
 export const useEditorStore = create<EditorState>((set, get) => ({
   project: loadSavedProject(),
   selectedEntityId: null,
+  selectedEntityIds: [],
   editorTab: 'scene',
   leftPanelTab: 'components',
   isPlaying: false,
@@ -133,7 +143,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         return scene;
       }),
       selectedEntityId: id,
-      leftPanelTab: 'properties',
     }));
   },
 
@@ -149,8 +158,45 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }));
   },
 
-  selectEntity: (id: string | null) => {
-    set({ selectedEntityId: id, leftPanelTab: id ? 'properties' : 'components' });
+  selectEntity: (id, additive) => {
+    if (!id) {
+      set({ selectedEntityId: null, selectedEntityIds: [] });
+      return;
+    }
+    if (additive) {
+      const current = get().selectedEntityIds;
+      const newIds = current.includes(id)
+        ? current.filter(eid => eid !== id)
+        : [...current, id];
+      const primary = newIds.length > 0 ? newIds[newIds.length - 1] : null;
+      set({ selectedEntityId: primary, selectedEntityIds: newIds, leftPanelTab: primary ? 'properties' : 'components' });
+    } else {
+      set({ selectedEntityId: id, selectedEntityIds: [id], leftPanelTab: 'properties' });
+    }
+  },
+
+  selectMultiple: (ids) => {
+    const primary = ids.length > 0 ? ids[ids.length - 1] : null;
+    set({ selectedEntityId: primary, selectedEntityIds: ids, leftPanelTab: primary ? 'properties' : 'components' });
+  },
+
+  removeSelectedEntities: () => {
+    const { selectedEntityIds } = get();
+    if (selectedEntityIds.length === 0) return;
+    set(state => {
+      let project = state.project;
+      for (const id of selectedEntityIds) {
+        const idx = project.scenes.findIndex(s => s.id === project.activeSceneId);
+        if (idx === -1) continue;
+        const scene = project.scenes[idx];
+        const { [id]: _, ...rest } = scene.entities;
+        const updatedScene = { ...scene, entities: rest, rootEntities: scene.rootEntities.filter(eid => eid !== id) };
+        const scenes = [...project.scenes];
+        scenes[idx] = updatedScene;
+        project = { ...project, scenes };
+      }
+      return { project, selectedEntityId: null, selectedEntityIds: [] };
+    });
   },
 
   updateEntityName: (id, name) => {
@@ -296,6 +342,74 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set(state => modifyScene(state, scene => {
       scene.gameState = { ...scene.gameState, ...gs };
       return scene;
+    }));
+  },
+
+  addScene: (name) => {
+    const id = generateId('scene');
+    const newScene: Scene = {
+      id,
+      name: name || `场景 ${get().project.scenes.length + 1}`,
+      entities: {},
+      rootEntities: [],
+      backgroundColor: '#1a1a2e',
+      gravity: 0,
+      gameState: { score: 0, health: 3, time: 0, isWin: false, isLose: false },
+      variables: [],
+    };
+    set(state => ({
+      project: {
+        ...state.project,
+        scenes: [...state.project.scenes, newScene],
+        activeSceneId: id,
+      },
+      selectedEntityId: null,
+    }));
+  },
+
+  removeScene: (sceneId) => {
+    const { project } = get();
+    if (project.scenes.length <= 1) return;
+    const remaining = project.scenes.filter(s => s.id !== sceneId);
+    const activeId = project.activeSceneId === sceneId ? remaining[0].id : project.activeSceneId;
+    set({
+      project: { ...project, scenes: remaining, activeSceneId: activeId },
+      selectedEntityId: null,
+    });
+  },
+
+  switchScene: (sceneId) => {
+    set(state => ({
+      project: { ...state.project, activeSceneId: sceneId },
+      selectedEntityId: null,
+    }));
+  },
+
+  renameScene: (sceneId, name) => {
+    set(state => ({
+      project: {
+        ...state.project,
+        scenes: state.project.scenes.map(s => s.id === sceneId ? { ...s, name } : s),
+      },
+    }));
+  },
+
+  duplicateScene: (sceneId) => {
+    const scene = get().project.scenes.find(s => s.id === sceneId);
+    if (!scene) return;
+    const newId = generateId('scene');
+    const duplicated: Scene = {
+      ...JSON.parse(JSON.stringify(scene)),
+      id: newId,
+      name: `${scene.name} 副本`,
+    };
+    set(state => ({
+      project: {
+        ...state.project,
+        scenes: [...state.project.scenes, duplicated],
+        activeSceneId: newId,
+      },
+      selectedEntityId: null,
     }));
   },
 

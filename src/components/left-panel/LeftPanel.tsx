@@ -23,7 +23,7 @@ export function LeftPanel() {
           <TabTrigger value="properties" icon={<Settings2 size={14} />} label="属性" />
         </Tabs.List>
 
-        <Tabs.Content value="components" className="flex-1 overflow-y-auto p-2 flex flex-col">
+        <Tabs.Content value="components" className="flex-1 overflow-y-auto p-2 flex flex-col" forceMount style={{ display: leftPanelTab === 'components' ? undefined : 'none' }}>
           <ComponentLibrary />
           <div className="mt-3 pt-3 border-t border-panel-border">
             <div className="flex items-center gap-1 text-[11px] text-text-secondary font-semibold mb-2 px-1">
@@ -32,10 +32,10 @@ export function LeftPanel() {
             <AssetPanel />
           </div>
         </Tabs.Content>
-        <Tabs.Content value="hierarchy" className="flex-1 overflow-y-auto p-2">
+        <Tabs.Content value="hierarchy" className="flex-1 overflow-y-auto p-2" forceMount style={{ display: leftPanelTab === 'hierarchy' ? undefined : 'none' }}>
           <HierarchyPanel />
         </Tabs.Content>
-        <Tabs.Content value="properties" className="flex-1 overflow-y-auto p-2">
+        <Tabs.Content value="properties" className="flex-1 overflow-y-auto p-2" forceMount style={{ display: leftPanelTab === 'properties' ? undefined : 'none' }}>
           <PropertiesPanel />
         </Tabs.Content>
       </Tabs.Root>

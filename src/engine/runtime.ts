@@ -1,8 +1,9 @@
 import type { Entity, ComponentData, BehaviorConfig, GameState, RigidBodyData } from '@/types';
-import { physicsStep, checkAABB, type CollisionPair } from './physics';
+import { physicsStep, checkAABB, raycast, type CollisionPair } from './physics';
 import { EventBus, EVENTS } from './eventBus';
 import { VariableStore } from './variableSystem';
 import { InputManager } from './inputManager';
+import { evaluateExpression } from './expression';
 
 export interface RuntimeEntity {
   id: string;
@@ -20,6 +21,7 @@ export interface RuntimeEntity {
   fontSize?: number;
   textColor?: string;
   fontFamily?: string;
+  imageAssetId?: string;
   behaviors: BehaviorConfig[];
   visible: boolean;
   alive: boolean;
@@ -63,6 +65,11 @@ export interface RuntimeEntity {
   flashTimer: number;
   // Projectile lifetime
   lifetime: number;
+  // Particles
+  particles: Array<{ x: number; y: number; vx: number; vy: number; life: number; maxLife: number; color: string; size: number }>;
+  particleTimer: number;
+  // Raycast beams for rendering
+  raycastBeams: Array<{ x1: number; y1: number; x2: number; y2: number; color: string }>;
 }
 
 export interface RuntimeState {
@@ -79,6 +86,9 @@ export interface RuntimeState {
   removeQueue: string[];
   worldWidth: number;
   worldHeight: number;
+  cameraX: number;
+  cameraY: number;
+  pendingSceneSwitch: string | null;
 }
 
 export function createRuntimeEntity(entity: Entity): RuntimeEntity {
@@ -106,6 +116,7 @@ export function createRuntimeEntity(entity: Entity): RuntimeEntity {
     fontSize: tx?.data.fontSize,
     textColor: tx?.data.color,
     fontFamily: tx?.data.fontFamily,
+    imageAssetId: s?.data.imageAssetId,
     behaviors: entity.behaviors.filter(b => b.enabled),
     visible: entity.visible,
     alive: true,
@@ -136,6 +147,9 @@ export function createRuntimeEntity(entity: Entity): RuntimeEntity {
     dragOffsetY: 0,
     flashTimer: 0,
     lifetime: 0,
+    particles: [],
+    particleTimer: 0,
+    raycastBeams: [],
   };
 }
 
@@ -750,7 +764,10 @@ function processBehavior(
     case 'condition-check': {
       const variable = (b.params.variable as string) || 'score';
       const operator = (b.params.operator as string) || '>=';
-      const value = b.params.value as number;
+      const rawValue = b.params.value;
+      const value = typeof rawValue === 'string' && /[a-zA-Z_+\-*/]/.test(rawValue)
+        ? evaluateExpression(rawValue, buildVarContext(state))
+        : (rawValue as number);
       const eventName = (b.params.eventName as string) || 'condition-met';
 
       if (state.variables.evaluate(variable, operator, value)) {
@@ -893,7 +910,155 @@ function processBehavior(
     }
 
     case 'play-sound': break;
+
+    case 'particle-emitter': {
+      const count = (b.params.count as number) || 20;
+      const speed = (b.params.speed as number) || 3;
+      const lt = (b.params.lifetime as number) || 1;
+      const spread = (b.params.spread as number) || 360;
+      const color = (b.params.color as string) || '#ffaa00';
+      const size = (b.params.size as number) || 4;
+      const grav = (b.params.gravity as number) || 0.5;
+      const continuous = b.params.continuous as boolean;
+      const interval = (b.params.interval as number) || 0.05;
+
+      // Update existing particles
+      for (let i = entity.particles.length - 1; i >= 0; i--) {
+        const p = entity.particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += grav * dt;
+        p.life -= dt;
+        if (p.life <= 0) entity.particles.splice(i, 1);
+      }
+
+      // Emit new particles
+      if (continuous) {
+        entity.particleTimer += dt;
+        while (entity.particleTimer >= interval && entity.particles.length < count * 3) {
+          entity.particleTimer -= interval;
+          const angle = (Math.random() * spread - spread / 2) * Math.PI / 180;
+          const spd = speed * (0.5 + Math.random() * 0.5);
+          entity.particles.push({
+            x: entity.x, y: entity.y,
+            vx: Math.cos(angle - Math.PI / 2) * spd,
+            vy: Math.sin(angle - Math.PI / 2) * spd,
+            life: lt * (0.5 + Math.random() * 0.5),
+            maxLife: lt, color, size,
+          });
+        }
+      } else if (entity.particles.length === 0 && entity.particleTimer === 0) {
+        for (let i = 0; i < count; i++) {
+          const angle = (Math.random() * spread - spread / 2) * Math.PI / 180;
+          const spd = speed * (0.5 + Math.random() * 0.5);
+          entity.particles.push({
+            x: entity.x, y: entity.y,
+            vx: Math.cos(angle - Math.PI / 2) * spd,
+            vy: Math.sin(angle - Math.PI / 2) * spd,
+            life: lt * (0.5 + Math.random() * 0.5),
+            maxLife: lt, color, size,
+          });
+        }
+        entity.particleTimer = 1;
+      }
+      break;
+    }
+
+    case 'camera-follow': {
+      const smoothing = (b.params.smoothing as number) || 0.08;
+      const ox = (b.params.offsetX as number) || 0;
+      const oy = (b.params.offsetY as number) || 0;
+      const deadZone = (b.params.deadZone as number) || 30;
+      const targetX = entity.x + ox;
+      const targetY = entity.y + oy;
+      const dx = targetX - state.cameraX;
+      const dy = targetY - state.cameraY;
+      if (Math.abs(dx) > deadZone || Math.abs(dy) > deadZone) {
+        state.cameraX += dx * smoothing;
+        state.cameraY += dy * smoothing;
+      }
+      break;
+    }
+
+    case 'screen-wrap': {
+      const margin = (b.params.margin as number) || 10;
+      if (entity.x < -margin) entity.x = state.worldWidth + margin;
+      if (entity.x > state.worldWidth + margin) entity.x = -margin;
+      if (entity.y < -margin) entity.y = state.worldHeight + margin;
+      if (entity.y > state.worldHeight + margin) entity.y = -margin;
+      break;
+    }
+
+    case 'raycast-sensor': {
+      const dir = ((b.params.direction as number) || 0) * Math.PI / 180;
+      const maxDist = (b.params.maxDistance as number) || 300;
+      const showBeam = b.params.showBeam as boolean;
+      const beamColor = (b.params.beamColor as string) || '#ff0000';
+
+      const dx = Math.cos(dir + entity.rotation * Math.PI / 180);
+      const dy = Math.sin(dir + entity.rotation * Math.PI / 180);
+      const hit = raycast(state, entity.x, entity.y, dx, dy, maxDist, entity.id);
+
+      entity.raycastBeams = [];
+      if (showBeam) {
+        const endX = hit ? hit.point.x : entity.x + dx * maxDist;
+        const endY = hit ? hit.point.y : entity.y + dy * maxDist;
+        entity.raycastBeams.push({ x1: entity.x, y1: entity.y, x2: endX, y2: endY, color: beamColor });
+      }
+
+      if (hit) {
+        const dmg = (b.params.damageOnHit as number) || 0;
+        if (dmg > 0 && !getCooldown(entity, 'ray-dmg')) {
+          if (hit.entity.type === 'player') {
+            state.gameState.health -= dmg;
+            state.variables.set('health', state.gameState.health);
+            if (state.gameState.health <= 0) { state.gameState.isLose = true; state.overlay = '游戏结束'; }
+          }
+          setCooldown(entity, 'ray-dmg', 0.5);
+        }
+        const eventName = (b.params.eventOnHit as string) || 'raycast-hit';
+        state.eventBus.emit(eventName, { entityId: entity.id, hitEntityId: hit.entity.id, hitPoint: hit.point });
+      }
+      break;
+    }
+
+    case 'scene-switch': {
+      const targetScene = (b.params.targetScene as string);
+      const trigger = (b.params.trigger as string) || 'collision';
+      if (!targetScene) break;
+
+      if (trigger === 'collision') {
+        for (const other of state.entities.values()) {
+          if (other.id === entity.id || !other.alive) continue;
+          if (other.type !== 'player') continue;
+          const dx = other.x - entity.x;
+          const dy = other.y - entity.y;
+          const combinedW = (entity.width + other.width) / 2;
+          const combinedH = (entity.height + other.height) / 2;
+          if (Math.abs(dx) < combinedW && Math.abs(dy) < combinedH) {
+            state.pendingSceneSwitch = targetScene;
+          }
+        }
+      } else if (trigger === 'event') {
+        // Triggered by event bus
+      }
+      break;
+    }
   }
+}
+
+function buildVarContext(state: RuntimeState): Record<string, number> {
+  const ctx: Record<string, number> = {
+    score: state.gameState.score,
+    health: state.gameState.health,
+    time: state.gameState.time,
+    elapsed: state.elapsed,
+    entityCount: state.entities.size,
+  };
+  for (const [name, val] of state.variables.getAll()) {
+    ctx[name] = typeof val === 'number' ? val : 0;
+  }
+  return ctx;
 }
 
 function spawnBullet(state: RuntimeState, spawn: { type: string; x: number; y: number; vx?: number; vy?: number }) {
@@ -940,6 +1105,9 @@ function spawnBullet(state: RuntimeState, spawn: { type: string; x: number; y: n
     dragOffsetY: 0,
     flashTimer: 0,
     lifetime: 0,
+    particles: [],
+    particleTimer: 0,
+    raycastBeams: [],
   };
 
   if (spawn.type === 'bullet') {
